@@ -193,16 +193,17 @@
     return `https://t.me/bezumnyy_kub_bot/app${sp}`;
   }
 
-  /** Открывает список контактов с сообщением + ссылкой на Mini App */
+  /** Открывает список контактов с сообщением. Ссылка на Mini App — в тексте (Telegram сам делает её кликабельной). */
   function shareToContact(message, miniAppLink) {
-    // url = ссылка на Mini App с startapp (Telegram делает preview + кнопка Open)
-    // text = сообщение + ссылка дублируется как запасной вариант
-    const textWithLink = `${message}\n\n🚀 Открыть: ${miniAppLink}`;
-    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(miniAppLink)}&text=${encodeURIComponent(textWithLink)}`;
+    // Ссылка на Mini App только в тексте — Telegram создаст кликабельную t.me ссылку
+    // При клике откроется Mini App с правильным startapp
+    const text = `${message}\n\n🚀 ${miniAppLink}`;
+    // url — простая ссылка на бота (для preview в сообщении)
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent("https://t.me/bezumnyy_kub_bot")}&text=${encodeURIComponent(text)}`;
     if (tg) {
       tg.openTelegramLink(shareUrl);
     } else {
-      copyToClipboard(textWithLink).then((ok) => {
+      copyToClipboard(text).then((ok) => {
         if (ok) showToast("📋 Скопировано! Отправь другу", "success");
         else window.open(shareUrl, "_blank");
       });
@@ -755,7 +756,8 @@
 
     if (sp.startsWith("bomb_")) {
       const bombId = sp.slice(5);
-      if (bombId.length === 24 && /^[0-9a-f]+$/.test(bombId)) {
+      // ID — чистый hex любой длины (гибкая проверка)
+      if (bombId.length > 0 && /^[0-9a-f]+$/.test(bombId)) {
         return bombId;
       }
     }
@@ -763,25 +765,37 @@
   }
 
   function checkForBombOnLoad() {
-    const bombId = getBombIdFromUrl();
-    if (!bombId) return;
+    // Пробуем сразу, затем с задержкой (tg.initDataUnsafe может быть не готов)
+    function tryCheck() {
+      const bombId = getBombIdFromUrl();
+      if (!bombId) return false;
 
-    state.currentBombId = bombId;
+      state.currentBombId = bombId;
+      API.checkBomb(bombId)
+        .then((data) => {
+          if (data.status === "active") {
+            // 7. Запуск таймера 15 минут
+            showBombModal(data.task, data.time_left);
+          } else if (data.status === "expired") {
+            showToast("💥 Эта бомба уже взорвалась!", "error");
+          } else if (data.status === "completed") {
+            showToast("✅ Это задание уже выполнено!", "success");
+          } else {
+            showToast("❌ Бомба не найдена", "error");
+          }
+        })
+        .catch(() => {}); // тихо — попробуем ещё
+      return true;
+    }
 
-    API.checkBomb(bombId)
-      .then((data) => {
-        if (data.status === "active") {
-          // 7. Запуск таймера 15 минут
-          showBombModal(data.task, data.time_left);
-        } else if (data.status === "expired") {
-          showToast("💥 Эта бомба уже взорвалась!", "error");
-        } else if (data.status === "completed") {
-          showToast("✅ Это задание уже выполнено!", "success");
-        } else {
-          showToast("❌ Бомба не найдена", "error");
-        }
-      })
-      .catch((err) => showToast(err.message, "error"));
+    if (tryCheck()) return;
+
+    // Ретрай через 300мс (tg.initDataUnsafe может грузиться)
+    setTimeout(() => {
+      if (tryCheck()) return;
+      // Ещё через 500мс — последняя попытка
+      setTimeout(() => tryCheck(), 500);
+    }, 300);
   }
 
   // =====================================================================
