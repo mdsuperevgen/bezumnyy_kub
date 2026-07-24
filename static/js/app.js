@@ -89,6 +89,42 @@
   }
 
   // =====================================================================
+  // КАСТОМНАЯ МОДАЛКА ПОДТВЕРЖДЕНИЯ (вместо confirm)
+  // =====================================================================
+  function showConfirmModal(title, message) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.className = "confirm-overlay";
+      overlay.innerHTML = `
+        <div class="confirm-box">
+          <div class="confirm-title">${title}</div>
+          <div class="confirm-message">${message.replace(/\n/g, "<br>")}</div>
+          <div class="confirm-actions">
+            <button class="btn confirm-cancel-btn">Отмена</button>
+            <button class="btn confirm-ok-btn">💣 Передать!</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+
+      overlay.querySelector(".confirm-cancel-btn").addEventListener("click", () => {
+        overlay.remove();
+        resolve(false);
+      });
+      overlay.querySelector(".confirm-ok-btn").addEventListener("click", () => {
+        overlay.remove();
+        resolve(true);
+      });
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) {
+          overlay.remove();
+          resolve(false);
+        }
+      });
+    });
+  }
+
+  // =====================================================================
   // ИНДИКАТОР ЗАГРУЗКИ
   // =====================================================================
   function showLoading(show) {
@@ -500,8 +536,12 @@
     if (!task && !state.currentTask) return;
     const t = task || state.currentTask;
 
-    // Подтверждение
-    if (!confirm("💣 Передать бомбу? У получателя будет 15 минут!")) return;
+    // Кастомное подтверждение вместо confirm() (не работает в Telegram)
+    const ok = await showConfirmModal(
+      "💣 Передать бомбу?",
+      `Задание: "${t.length > 60 ? t.slice(0, 60) + "…" : t}"\nУ получателя будет 15 минут!`
+    );
+    if (!ok) return;
 
     try {
       setButtonLoading(el.bombBtn, true);
@@ -517,17 +557,20 @@
   }
 
   async function openShareBombLink(result) {
-    // Telegram Mini App ссылка
-    const url = `https://t.me/share/url?url=${encodeURIComponent(result.link)}`;
-    if (tg) {
-      tg.openTelegramLink(url);
+    // Прямая ссылка на Mini App с bomb_id
+    const miniAppUrl = result.link;
+
+    // Копируем ссылку в буфер
+    const copied = await copyToClipboard(miniAppUrl);
+
+    if (copied) {
+      showToast("📋 Ссылка скопирована! Отправь другу в личку", "success");
+    } else if (tg) {
+      // Fallback: открываем share dialog
+      const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(miniAppUrl)}&text=${encodeURIComponent("💣 Я передаю тебе бомбу от Безумного Куба!")}`;
+      tg.openTelegramLink(shareUrl);
     } else {
-      const copied = await copyToClipboard(result.link);
-      if (copied) {
-        showToast("📋 Ссылка скопирована! Отправь другу", "success");
-      } else {
-        window.open(url, "_blank");
-      }
+      window.open(miniAppUrl, "_blank");
     }
 
     triggerHaptic("heavy");
@@ -648,18 +691,29 @@
   // БОМБА — ПАРСИНГ URL
   // =====================================================================
   function getBombIdFromUrl() {
-    const params = new URLSearchParams(window.location.search);
-    const sp = params.get("startapp");
+    // 1. Telegram WebApp: initDataUnsafe.start_param
+    let sp = null;
+    try {
+      if (tg?.initDataUnsafe?.start_param) {
+        sp = tg.initDataUnsafe.start_param;
+      }
+    } catch {}
+
+    // 2. Fallback: URL query string
+    if (!sp) {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        sp = params.get("startapp") || params.get("tgWebAppStartParam");
+      } catch {}
+    }
+
     if (!sp) return null;
 
-    // Формат: bomb_<hex_id>_<timestamp>_<hex_task>
-    // Разделяем только по первому _ после bomb и последнему _
+    // Формат: bomb_<hex_id> (только bomb_id — никакого задания)
     if (sp.startsWith("bomb_")) {
-      const withoutPrefix = sp.slice(5); // убираем "bomb_"
-      // Ищем второй _ (между id и timestamp) — первый _ после префикса
-      const firstUnderscore = withoutPrefix.indexOf("_");
-      if (firstUnderscore > 0) {
-        const bombId = withoutPrefix.substring(0, firstUnderscore);
+      const bombId = sp.slice(5); // убираем "bomb_"
+      // ID должен быть чистым hex (24 символа)
+      if (bombId.length === 24 && /^[0-9a-f]+$/.test(bombId)) {
         return bombId;
       }
     }

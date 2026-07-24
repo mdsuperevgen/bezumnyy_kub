@@ -126,17 +126,14 @@ class BombManager:
     def __init__(self):
         self.bombs: dict[str, dict] = {}
 
-    def _generate_id(self, task: str) -> str:
-        # Чистый hex — никаких подчёркиваний
+    def _generate_id(self) -> str:
         return secrets.token_hex(12)
 
     def create_bomb(self, task: str, owner_id: str | None = None):
-        bomb_id = self._generate_id(task)
+        bomb_id = self._generate_id()
         now = time.time()
         self.bombs[bomb_id] = {
             "task": task,
-            # Кодируем через hex — безопасно для URL, без _
-            "task_encoded": task.encode("utf-8").hex(),
             "created_at": now,
             "expires_at": now + BOMB_TIMEOUT,
             "owner_id": owner_id,
@@ -182,11 +179,11 @@ bomb_manager = BombManager()
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _bomb_link(bomb_id: str, task_encoded: str) -> str:
+def _bomb_link(bomb_id: str) -> str:
     """Генерирует корректную Telegram Deep Link.
-    Формат: bomb_<id>_<encoded_task> (нижние подчёркивания только как разделители).
+    Формат: bomb_<id> (максимум 31 символ — помещается в лимит startapp).
     """
-    startapp = f"bomb_{bomb_id}_{task_encoded}"
+    startapp = f"bomb_{bomb_id}"
     return f"https://t.me/{BOT_USERNAME}/app?startapp={startapp}", startapp
 
 
@@ -254,7 +251,7 @@ def create_bomb():
         return jsonify({"success": False, "error": "Task is required"}), 400
 
     bomb_id, bomb_data = bomb_manager.create_bomb(data["task"], data.get("owner_id"))
-    link, start_param = _bomb_link(bomb_id, bomb_data["task_encoded"])
+    link, start_param = _bomb_link(bomb_id)
 
     return jsonify({
         "success": True,
@@ -312,7 +309,7 @@ def pass_bomb():
         return jsonify({"success": False, "error": "Bomb not found or no longer active"}), 404
 
     new_id, new_data = result
-    link, start_param = _bomb_link(new_id, new_data["task_encoded"])
+    link, start_param = _bomb_link(new_id)
 
     return jsonify({
         "success": True,
