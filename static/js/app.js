@@ -194,13 +194,16 @@
   }
 
   /** Открывает список контактов с сообщением + ссылкой на Mini App */
-  function shareToContact(message, link) {
-    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(message)}`;
+  function shareToContact(message, miniAppLink) {
+    // url = простая ссылка на бота (без параметров, без конфликтов)
+    // text = сообщение + полная ссылка на Mini App (Telegram сделает её кликабельной)
+    const botLink = "https://t.me/bezumnyy_kub_bot";
+    const textWithLink = `${message}\n\n🚀 Открыть: ${miniAppLink}`;
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(botLink)}&text=${encodeURIComponent(textWithLink)}`;
     if (tg) {
       tg.openTelegramLink(shareUrl);
     } else {
-      const fullText = `${message}\n\n${link}`;
-      copyToClipboard(fullText).then((ok) => {
+      copyToClipboard(textWithLink).then((ok) => {
         if (ok) showToast("📋 Скопировано! Отправь другу", "success");
         else window.open(shareUrl, "_blank");
       });
