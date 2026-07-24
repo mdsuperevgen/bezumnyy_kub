@@ -195,11 +195,10 @@
 
   /** Открывает список контактов с сообщением + ссылкой на Mini App */
   function shareToContact(message, miniAppLink) {
-    // url = простая ссылка на бота (без параметров, без конфликтов)
-    // text = сообщение + полная ссылка на Mini App (Telegram сделает её кликабельной)
-    const botLink = "https://t.me/bezumnyy_kub_bot";
+    // url = ссылка на Mini App с startapp (Telegram делает preview + кнопка Open)
+    // text = сообщение + ссылка дублируется как запасной вариант
     const textWithLink = `${message}\n\n🚀 Открыть: ${miniAppLink}`;
-    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(botLink)}&text=${encodeURIComponent(textWithLink)}`;
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(miniAppLink)}&text=${encodeURIComponent(textWithLink)}`;
     if (tg) {
       tg.openTelegramLink(shareUrl);
     } else {
