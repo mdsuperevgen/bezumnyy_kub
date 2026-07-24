@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+    <!-- Primary Meta -->
+    <title>Безумный Куб</title>
+    <meta name="description" content="Безумный Куб — вечеринка в формате Telegram Mini App. Тряси куб, получай задания, передавай бомбы друзьям!">
+    <meta name="theme-color" content="#0a0818">
+    <meta name="color-scheme" content="dark">
+
+    <!-- Open Graph / Telegram -->
+    <meta property="og:title" content="Безумный Куб">
+    <meta property="og:description" content="Тряси куб, выполняй задания, передавай бомбы!">
+    <meta property="og:image" content="https://t.me/bezumnyy_kub_bot/icon.png">
+    <meta property="og:url" content="https://t.me/bezumnyy_kub_bot/app">
+    <meta property="og:type" content="website">
+    <meta property="og:locale" content="ru_RU">
+
+    <meta name="robots" content="noindex, nofollow">
+
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎲</text></svg>">
+
+    <!-- Preconnect for fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header>
+            <h1 class="neon-title">БЕЗУМНЫЙ КУБ</h1>
+            <div class="header-right">
+                <span class="header-badge">v2.0</span>
+                <div class="score-display">
+                    <span id="score">0</span> 🔥
+                </div>
+            </div>
+        </header>
+
+        <!-- 3D Cube -->
+        <div class="cube-wrapper" id="cubeWrapper">
+            <div class="cube" id="cube">
+                <div class="face front"></div>
+                <div class="face back"></div>
+                <div class="face right"></div>
+                <div class="face left"></div>
+                <div class="face top"></div>
+                <div class="face bottom"></div>
+            </div>
+            <div class="glow-ring"></div>
+        </div>
+
+        <!-- Task Card -->
+        <div class="task-card" id="taskCard">
+            <div class="task-label">🎯 ЗАДАНИЕ</div>
+            <div class="task-text task-placeholder" id="taskDisplay">
+                Тряси или жми на куб!
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="actions">
+            <button class="btn btn-primary" id="shareBtn">
+                <span class="btn-icon">📤</span> Выполнил! Скинуть в чат
+            </button>
+            <button class="btn btn-danger" id="bombBtn">
+                <span class="btn-icon">💣</span> Передать Бомбу (15 мин)
+            </button>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats">
+            <span>🔥 Выполнено: <strong id="completedCount">0</strong></span>
+            <span>💣 Передано: <strong id="bombCount">0</strong></span>
+        </div>
+
+        <div class="footer">
+            тряси куб · киберпанк
+        </div>
+    </div>
+
+    <!-- Confetti -->
+    <div id="confettiContainer"></div>
+
+    <!-- Loading -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <!-- Bomb Modal -->
+    <div class="modal" id="bombModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="bomb-icon">💣</span>
+                <h2>ВАМ ПЕРЕДАЛИ БОМБУ!</h2>
+            </div>
+            <div class="modal-body">
+                <div class="task-card" style="border-color: rgba(255,68,68,0.45);">
+                    <div class="task-text" id="bombTaskDisplay">Загрузка задания...</div>
+                </div>
+                <div class="timer-container">
+                    <div class="timer-display" id="timerDisplay">15:00</div>
+                    <div class="timer-bar">
+                        <div class="timer-bar-fill" id="timerBarFill"></div>
+                    </div>
+                </div>
+                <div class="bomb-actions">
+                    <button class="btn btn-success" id="doBombTaskBtn">✅ Выполнить задание!</button>
+                    <button class="btn btn-danger" id="passBombBtn">🔄 Передать другому</button>
+                </div>
+                <div class="warning-text">У вас 15 минут, иначе бомба взорвётся!</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
