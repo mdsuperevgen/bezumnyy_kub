@@ -3,7 +3,6 @@ import os
 import random
 import json
 import time
-import base64
 import secrets
 from flask import Flask, render_template, jsonify, request
 
@@ -15,6 +14,9 @@ BOT_USERNAME = os.getenv("BOT_USERNAME", "bezumnyy_kub_bot")
 BOMB_TIMEOUT = int(os.getenv("BOMB_TIMEOUT", "900"))
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 TASKS_FILE = os.path.join(DATA_DIR, "tasks.json")
+# Rate limit: макс запросов на интервал
+RATE_LIMIT = int(os.getenv("RATE_LIMIT", "30"))
+RATE_WINDOW = int(os.getenv("RATE_WINDOW", "60"))
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -125,15 +127,16 @@ class BombManager:
         self.bombs: dict[str, dict] = {}
 
     def _generate_id(self, task: str) -> str:
-        raw = f"{secrets.token_hex(4)}_{task[:10]}_{int(time.time())}"
-        return base64.urlsafe_b64encode(raw.encode()).decode()[:14]
+        # Чистый hex — никаких подчёркиваний
+        return secrets.token_hex(12)
 
     def create_bomb(self, task: str, owner_id: str | None = None):
         bomb_id = self._generate_id(task)
         now = time.time()
         self.bombs[bomb_id] = {
             "task": task,
-            "task_encoded": base64.urlsafe_b64encode(task.encode()).decode(),
+            # Кодируем через hex — безопасно для URL, без _
+            "task_encoded": task.encode("utf-8").hex(),
             "created_at": now,
             "expires_at": now + BOMB_TIMEOUT,
             "owner_id": owner_id,
@@ -180,9 +183,44 @@ bomb_manager = BombManager()
 # Helpers
 # ---------------------------------------------------------------------------
 def _bomb_link(bomb_id: str, task_encoded: str) -> str:
-    """Генерирует корректную Telegram Deep Link."""
+    """Генерирует корректную Telegram Deep Link.
+    Формат: bomb_<id>_<encoded_task> (нижние подчёркивания только как разделители).
+    """
     startapp = f"bomb_{bomb_id}_{task_encoded}"
     return f"https://t.me/{BOT_USERNAME}/app?startapp={startapp}", startapp
+
+
+# ---------------------------------------------------------------------------
+# Rate limiter (IP-based, in-memory)
+# ---------------------------------------------------------------------------
+from collections import defaultdict
+
+
+class RateLimiter:
+    def __init__(self, max_requests: int = RATE_LIMIT, window_sec: int = RATE_WINDOW):
+        self.max_requests = max_requests
+        self.window_sec = window_sec
+        self._requests: dict[str, list[float]] = defaultdict(list)
+
+    def is_limited(self, ip: str) -> bool:
+        now = time.time()
+        cutoff = now - self.window_sec
+        self._requests[ip] = [t for t in self._requests[ip] if t > cutoff]
+        if len(self._requests[ip]) >= self.max_requests:
+            return True
+        self._requests[ip].append(now)
+        return False
+
+
+rate_limiter = RateLimiter()
+
+
+def check_rate_limit():
+    """Проверяет rate limit для текущего запроса."""
+    ip = request.remote_addr or "unknown"
+    if rate_limiter.is_limited(ip):
+        return jsonify({"success": False, "error": "Слишком много запросов. Подожди немного."}), 429
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -193,14 +231,24 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/health")
+def health():
+    """Health check для Railway."""
+    return jsonify({"status": "ok", "tasks": len(ALL_TASKS), "bombs": bomb_manager.stats()})
+
+
 @app.route("/api/tasks/random")
 def random_task():
     """Возвращает случайное задание."""
+    rl = check_rate_limit()
+    if rl: return rl
     return jsonify({"success": True, "task": random.choice(ALL_TASKS)})
 
 
 @app.route("/api/bomb/create", methods=["POST"])
 def create_bomb():
+    rl = check_rate_limit()
+    if rl: return rl
     data = request.get_json(silent=True)
     if not data or "task" not in data:
         return jsonify({"success": False, "error": "Task is required"}), 400
@@ -220,6 +268,8 @@ def create_bomb():
 
 @app.route("/api/bomb/check/<bomb_id>")
 def check_bomb(bomb_id):
+    rl = check_rate_limit()
+    if rl: return rl
     bomb = bomb_manager.get_bomb(bomb_id)
     if not bomb:
         return jsonify({"success": False, "error": "Bomb not found"}), 404
@@ -242,6 +292,8 @@ def check_bomb(bomb_id):
 
 @app.route("/api/bomb/complete/<bomb_id>", methods=["POST"])
 def complete_bomb(bomb_id):
+    rl = check_rate_limit()
+    if rl: return rl
     if bomb_manager.complete_bomb(bomb_id):
         return jsonify({"success": True, "message": "Bomb completed!"})
     return jsonify({"success": False, "error": "Bomb not found or already completed"}), 404
@@ -249,6 +301,8 @@ def complete_bomb(bomb_id):
 
 @app.route("/api/bomb/pass", methods=["POST"])
 def pass_bomb():
+    rl = check_rate_limit()
+    if rl: return rl
     data = request.get_json(silent=True)
     if not data or "bomb_id" not in data:
         return jsonify({"success": False, "error": "bomb_id required"}), 400

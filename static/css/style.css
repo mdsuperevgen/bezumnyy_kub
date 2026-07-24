@@ -453,6 +453,52 @@ header {
   to   { opacity: 1; transform: scale(1); }
 }
 
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@keyframes toastOut {
+  from { opacity: 1; transform: translateX(-50%) translateY(0); }
+  to   { opacity: 0; transform: translateX(-50%) translateY(20px); }
+}
+
+/* Background Particles */
+.bg-particle {
+  position: fixed;
+  pointer-events: none;
+  z-index: 0;
+}
+
+@keyframes particleFloat {
+  0%, 100% {
+    transform: translateY(0) translateX(0) scale(1);
+    opacity: 0;
+  }
+  10% { opacity: 0.6; }
+  50% {
+    transform: translateY(-30vh) translateX(20px) scale(1.5);
+    opacity: 0.3;
+  }
+  90% { opacity: 0.6; }
+}
+
+/* Button Spinner */
+.btn-spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255,255,255,0.2);
+  border-top: 2px solid #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 /* ------------------------------------------------------------------ */
 /* BOMB MODAL                                                         */
 /* ------------------------------------------------------------------ */
@@ -581,7 +627,7 @@ header {
   left: 0;
   width: 100%;
   height: 100%;
-  background: radial-gradient(circle, #ff0000, #cc0000, #000);
+  background: radial-gradient(circle at center, #ff2200 0%, #aa0000 40%, #1a0000 80%, #000 100%);
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -589,15 +635,34 @@ header {
   z-index: 9999;
   color: white;
   font-size: 1.1rem;
-  animation: fadeIn 0.4s ease;
+  animation: explosionIn 0.5s ease forwards;
   padding: 24px;
   text-align: center;
   gap: 6px;
 }
 
-.explosion-overlay h1 {
+@keyframes explosionIn {
+  0%   { opacity: 0; transform: scale(1.5); filter: blur(10px); }
+  50%  { opacity: 1; transform: scale(0.95); filter: blur(0); }
+  100% { opacity: 1; transform: scale(1); filter: blur(0); }
+}
+
+.explosion-emoji {
+  font-size: 6rem;
+  animation: bombPulse 0.8s ease-in-out infinite;
+}
+
+.explosion-title {
   font-family: 'Unbounded', sans-serif;
   font-weight: 800;
+  color: #ff6b6b;
+  text-shadow: 0 0 40px rgba(255, 0, 0, 0.8), 0 0 80px rgba(255, 0, 0, 0.4);
+  font-size: 1.6rem;
+}
+
+.explosion-sub {
+  color: #ff9999;
+  margin-top: 10px;
 }
 
 .explosion-btn {

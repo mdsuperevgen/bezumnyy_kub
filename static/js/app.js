@@ -49,10 +49,11 @@
     completedTasks: 0,
     bombPassedCount: 0,
     bombTimerId: null,
-    bombTimerEnd: 0, // timestamp окончания (Date.now)
+    bombTimerEnd: 0,
     bombData: null,
     isBombActive: false,
     hasGeneratedTask: false,
+    currentBombId: null, // ID текущей бомбы при открытии
   };
 
   // =====================================================================
@@ -78,11 +79,13 @@
       color: white; padding: 10px 24px; border-radius: 40px;
       font-size: 0.9rem; font-weight: 600; z-index: 9999;
       box-shadow: 0 0 30px rgba(0,0,0,0.5);
-      animation: fadeIn 0.2s ease, fadeIn 0.2s ease reverse forwards 2.5s;
-      max-width: 90vw; text-align: center;
+      animation: toastIn 0.25s ease, toastOut 0.25s ease 2.8s forwards;
+      max-width: 90vw; text-align: center; pointer-events: none;
     `;
     document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 3000);
+    setTimeout(() => {
+      if (toast.parentNode) toast.remove();
+    }, 3500);
   }
 
   // =====================================================================
@@ -95,12 +98,59 @@
   }
 
   // =====================================================================
+  // Состояние кнопок
+  // =====================================================================
+  function setButtonLoading(btn, loading) {
+    if (!btn) return;
+    if (loading) {
+      btn._origHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = `<span class="btn-spinner"></span>`;
+    } else {
+      btn.disabled = false;
+      if (btn._origHtml) btn.innerHTML = btn._origHtml;
+    }
+  }
+
+  // =====================================================================
+  // Копирование текста (fallback для Telegram)
+  // =====================================================================
+  async function copyToClipboard(text) {
+    try {
+      if (tg?.Clipboard) {
+        tg.Clipboard.setText(text);
+        return true;
+      }
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+      // Fallback: textarea
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // =====================================================================
   // API-ВЫЗОВЫ (с обработкой ошибок)
   // =====================================================================
   async function apiFetch(url, options) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
     try {
       const resp = await fetch(url, {
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         ...options,
       });
       const data = await resp.json();
@@ -109,10 +159,15 @@
       }
       return data;
     } catch (err) {
+      if (err.name === "AbortError") {
+        throw new Error("Сервер не отвечает. Попробуй ещё раз.");
+      }
       if (err.name !== "Error" || !err.message.includes("API error")) {
-        throw new Error("Network error. Check your connection.");
+        throw new Error("Нет соединения. Проверь интернет.");
       }
       throw err;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -208,23 +263,22 @@
   }
 
   // =====================================================================
-  // КОНФЕТТИ (с защитой от утечки)
+  // КОНФЕТТИ (защита от утечки, кастомные emoji)
   // =====================================================================
   const CONFETTI_COLORS = [
     "#ff6b6b", "#ffd93d", "#6bcb77", "#4d96ff",
     "#ff6bff", "#ff9f43", "#00d2d3", "#f368e0",
-    "#ff9ff3", "#54a0ff", "#5f27cd",
+    "#ff9ff3", "#54a0ff", "#5f27cd", "#ff4757",
   ];
-  const CONFETTI_SHAPES = ["■", "●", "▲", "★", "♦", "♥"];
+  const CONFETTI_SHAPES = ["✦", "●", "▲", "★", "♦", "♥", "⬡", "◆"];
   let confettiCount = 0;
   const MAX_CONFETTI = 200;
 
   function launchConfetti(count) {
-    count = Math.min(count, 60);
+    count = Math.min(count, 80);
     const now = Date.now();
 
     for (let i = 0; i < count; i++) {
-      // Защита: удаляем старые, если превышен лимит
       if (confettiCount > MAX_CONFETTI) {
         const old = el.confettiContainer.querySelector(".confetti-piece");
         if (old) {
@@ -236,18 +290,18 @@
       const piece = document.createElement("div");
       piece.className = "confetti-piece";
 
-      const color = CONFETTI_COLORS[now % CONFETTI_COLORS.length];
-      const idx = (now + i) % CONFETTI_SHAPES.length;
-      const size = 6 + ((now + i * 7) % 10);
+      const color = CONFETTI_COLORS[(now + i) % CONFETTI_COLORS.length];
+      const shape = CONFETTI_SHAPES[(now + i) % CONFETTI_SHAPES.length];
+      const size = 8 + ((now + i * 7) % 14);
 
-      piece.textContent = CONFETTI_SHAPES[idx];
+      piece.textContent = shape;
       piece.style.color = color;
       piece.style.fontSize = size + "px";
       piece.style.left = Math.random() * 100 + "%";
       piece.style.top = "-10px";
-      piece.style.animationDuration = 1.5 + Math.random() * 2 + "s";
-      piece.style.animationDelay = Math.random() * 0.5 + "s";
-      piece.style.setProperty("--rot", Math.random() * 360 + "deg");
+      piece.style.animationDuration = 2 + Math.random() * 2.5 + "s";
+      piece.style.animationDelay = Math.random() * 0.6 + "s";
+      piece.style.setProperty("--rot", Math.random() * 720 - 360 + "deg");
 
       el.confettiContainer.appendChild(piece);
       confettiCount++;
@@ -262,7 +316,7 @@
   // =====================================================================
   // СТАТИСТИКА (localStorage)
   // =====================================================================
-  const STORAGE_KEY = "kub_stats_v2";
+  const STORAGE_KEY = "kub_stats_v3";
 
   function saveStats() {
     try {
@@ -300,6 +354,22 @@
     saveStats();
   }
 
+  // Анимация счёта (число бежит вверх)
+  function animateScore(from, to, el) {
+    if (!el) return;
+    const duration = 400;
+    const start = performance.now();
+
+    function tick(now) {
+      const progress = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3); // easeOutCubic
+      const current = Math.round(from + (to - from) * eased);
+      el.textContent = current;
+      if (progress < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
   // =====================================================================
   // ЗАДАНИЕ
   // =====================================================================
@@ -311,7 +381,6 @@
 
     if (!isPlaceholder) {
       el.taskDisplay.classList.remove("task-pop");
-      // Trigger reflow для рестарта анимации
       void el.taskDisplay.offsetWidth;
       el.taskDisplay.classList.add("task-pop");
     }
@@ -325,27 +394,24 @@
     state.isSpinning = true;
 
     el.cube.classList.remove("spinning");
-    void el.cube.offsetWidth; // reflow
+    void el.cube.offsetWidth;
     el.cube.classList.add("spinning");
 
     triggerHaptic("heavy");
     playCubeSound();
 
-    // Дожидаемся конца анимации
     await new Promise((resolve) => {
       const onEnd = () => {
         el.cube.removeEventListener("animationend", onEnd);
         resolve();
       };
       el.cube.addEventListener("animationend", onEnd, { once: true });
-      // Страховка: если анимация не сработала
       setTimeout(resolve, 1200);
     });
 
     el.cube.classList.remove("spinning");
     state.isSpinning = false;
 
-    // Получаем задание
     try {
       showLoading(true);
       const data = await API.getRandomTask();
@@ -362,28 +428,65 @@
   }
 
   // =====================================================================
+  // СВАЙП ПО КУБУ
+  // =====================================================================
+  let touchStartX = 0;
+  let touchStartY = 0;
+
+  el.cubeWrapper.addEventListener("touchstart", (e) => {
+    const t = e.changedTouches[0];
+    touchStartX = t.clientX;
+    touchStartY = t.clientY;
+  }, { passive: true });
+
+  el.cubeWrapper.addEventListener("touchend", (e) => {
+    if (state.isBombActive) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStartX;
+    const dy = t.clientY - touchStartY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist > 80) {
+      // Свайп — более сильное вращение
+      if (!state.isSpinning) spinCube();
+    }
+    // else: обычный клик обрабатывается отдельно
+  }, { passive: true });
+
+  // =====================================================================
   // ПОДЕЛИТЬСЯ
   // =====================================================================
   function getBotLink() {
-    // Берётся из серверной конфигурации, но для ссылки шаринга используем t.me/share
     return "https://t.me/bezumnyy_kub_bot";
   }
 
-  function openShare(task, isBomb) {
+  async function openShare(task, isBomb) {
     if (!task && !state.currentTask) return;
     const t = task || state.currentTask;
     const prefix = isBomb ? "💣" : "🔥";
     const text = `${prefix} Я ${isBomb ? "передал бомбу" : "выполнил задание"} от Безумного Куба: "${t}"! Тряси куб, если не струсил: ${getBotLink()}`;
 
+    // Пробуем Telegram API
     const url = `https://t.me/share/url?url=${encodeURIComponent(text)}`;
-    if (tg) tg.openTelegramLink(url);
-    else window.open(url, "_blank");
+    if (tg) {
+      tg.openTelegramLink(url);
+    } else {
+      // Fallback: копируем в буфер
+      const copied = await copyToClipboard(text);
+      if (copied) {
+        showToast("📋 Текст скопирован! Вставь в Telegram", "success");
+      } else {
+        window.open(url, "_blank");
+      }
+    }
 
     triggerHaptic("light");
 
     if (!isBomb) {
+      const oldScore = state.score;
       state.completedTasks++;
       state.score += 10;
+      animateScore(oldScore, state.score, el.scoreDisplay);
       updateStats();
       launchConfetti(60);
       playSuccessSound();
@@ -397,28 +500,44 @@
     if (!task && !state.currentTask) return;
     const t = task || state.currentTask;
 
+    // Подтверждение
+    if (!confirm("💣 Передать бомбу? У получателя будет 15 минут!")) return;
+
     try {
+      setButtonLoading(el.bombBtn, true);
       showLoading(true);
       const result = await API.createBomb(t);
-      openShareBombLink(result);
+      await openShareBombLink(result);
     } catch (err) {
       showToast(err.message, "error");
     } finally {
       showLoading(false);
+      setButtonLoading(el.bombBtn, false);
     }
   }
 
-  function openShareBombLink(result) {
+  async function openShareBombLink(result) {
+    // Telegram Mini App ссылка
     const url = `https://t.me/share/url?url=${encodeURIComponent(result.link)}`;
-    if (tg) tg.openTelegramLink(url);
-    else window.open(url, "_blank");
+    if (tg) {
+      tg.openTelegramLink(url);
+    } else {
+      const copied = await copyToClipboard(result.link);
+      if (copied) {
+        showToast("📋 Ссылка скопирована! Отправь другу", "success");
+      } else {
+        window.open(url, "_blank");
+      }
+    }
 
     triggerHaptic("heavy");
+    const oldBomb = state.bombPassedCount;
     state.bombPassedCount++;
+    animateScore(oldBomb, state.bombPassedCount, el.bombCount);
     updateStats();
     playBombSound();
 
-    showToast(`💣 Бомба с заданием "${result.task}" передана!`, "success");
+    showToast(`💣 Бомба "${result.task}" передана!`, "success");
   }
 
   // =====================================================================
@@ -426,22 +545,23 @@
   // =====================================================================
   function tickBombTimer() {
     const remaining = Math.max(0, state.bombTimerEnd - Date.now());
-    const total = state.bombData?.totalTime || 900000; // ms
+    const total = state.bombData?.totalTime || 900000;
     const progress = total > 0 ? (remaining / total) * 100 : 0;
 
-    // Обновляем дисплей
     const secs = Math.ceil(remaining / 1000);
     const mins = Math.floor(secs / 60);
     el.timerDisplay.textContent = `${String(mins).padStart(2, "0")}:${String(secs % 60).padStart(2, "0")}`;
     el.timerBarFill.style.width = `${clamp(progress, 0, 100)}%`;
 
-    // Цвет
     if (remaining < 60000) {
       el.timerBarFill.style.background = "#ff0000";
       el.timerDisplay.style.color = "#ff0000";
     } else if (remaining < 300000) {
       el.timerBarFill.style.background = "#ff6b00";
       el.timerDisplay.style.color = "#ff6b00";
+    } else {
+      el.timerBarFill.style.background = "linear-gradient(90deg, #ff6b6b, #ff4444)";
+      el.timerDisplay.style.color = "#ff6b6b";
     }
 
     if (remaining <= 0) {
@@ -485,41 +605,43 @@
   }
 
   // =====================================================================
-  // БОМБА — ВЗРЫВ (чистое DOM, без innerHTML)
+  // БОМБА — ВЗРЫВ
   // =====================================================================
   function bombExploded() {
     hideBombModal();
 
-    // Создаём overlay через DOM, не трогая innerHTML
     const overlay = document.createElement("div");
     overlay.className = "explosion-overlay";
     overlay.innerHTML = `
-      <div style="font-size:6rem;">💥</div>
-      <h1 style="color:#ff6b6b;text-shadow:0 0 40px red;">БОМБА ВЗОРВАЛАСЬ!</h1>
-      <p style="color:#ff9999;margin-top:10px;">Ты не выполнил задание вовремя!</p>
+      <div class="explosion-emoji">💥</div>
+      <h1 class="explosion-title">БОМБА ВЗОРВАЛАСЬ!</h1>
+      <p class="explosion-sub">Ты не выполнил задание вовремя!</p>
       <button class="explosion-btn">🔄 Попробовать снова</button>
     `;
     document.body.appendChild(overlay);
 
     triggerHaptic("heavy");
 
-    // Отправляем позор в Telegram
+    // Позор
     const shameText = `💥 Я струсил и не выполнил задание: "${state.bombData?.task || "задание"}"! Тряси куб, если не струсил!`;
     setTimeout(() => {
       const url = `https://t.me/share/url?url=${encodeURIComponent(shameText)}`;
       if (tg) tg.openTelegramLink(url);
-      else window.open(url, "_blank");
+      else {
+        copyToClipboard(shameText).then((ok) => {
+          if (ok) showToast("📋 Текст позора скопирован!", "info");
+          else window.open(url, "_blank");
+        });
+      }
     }, 1500);
 
-    // Кнопка рестарта
     overlay.querySelector(".explosion-btn").addEventListener("click", () => {
       overlay.remove();
     });
 
-    // Авто-удаление через 8 сек
     setTimeout(() => {
       if (overlay.parentNode) overlay.remove();
-    }, 8000);
+    }, 10000);
   }
 
   // =====================================================================
@@ -528,9 +650,18 @@
   function getBombIdFromUrl() {
     const params = new URLSearchParams(window.location.search);
     const sp = params.get("startapp");
-    if (sp && sp.startsWith("bomb_")) {
-      const parts = sp.split("_");
-      return parts.length >= 2 ? parts[1] : null;
+    if (!sp) return null;
+
+    // Формат: bomb_<hex_id>_<timestamp>_<hex_task>
+    // Разделяем только по первому _ после bomb и последнему _
+    if (sp.startsWith("bomb_")) {
+      const withoutPrefix = sp.slice(5); // убираем "bomb_"
+      // Ищем второй _ (между id и timestamp) — первый _ после префикса
+      const firstUnderscore = withoutPrefix.indexOf("_");
+      if (firstUnderscore > 0) {
+        const bombId = withoutPrefix.substring(0, firstUnderscore);
+        return bombId;
+      }
     }
     return null;
   }
@@ -538,6 +669,8 @@
   function checkForBombOnLoad() {
     const bombId = getBombIdFromUrl();
     if (!bombId) return;
+
+    state.currentBombId = bombId;
 
     API.checkBomb(bombId)
       .then((data) => {
@@ -555,13 +688,37 @@
   }
 
   // =====================================================================
+  // Background частицы (эффект звездопада)
+  // =====================================================================
+  function initParticles() {
+    const container = document.body;
+    for (let i = 0; i < 25; i++) {
+      const p = document.createElement("div");
+      p.className = "bg-particle";
+      p.style.cssText = `
+        position: fixed;
+        width: ${1 + Math.random() * 2}px;
+        height: ${1 + Math.random() * 2}px;
+        background: rgba(${150 + Math.random() * 105}, ${50 + Math.random() * 100}, 255, ${0.2 + Math.random() * 0.3});
+        border-radius: 50%;
+        left: ${Math.random() * 100}%;
+        top: ${Math.random() * 100}%;
+        pointer-events: none;
+        z-index: 0;
+        animation: particleFloat ${5 + Math.random() * 8}s ease-in-out infinite;
+        animation-delay: ${Math.random() * 5}s;
+      `;
+      document.body.appendChild(p);
+    }
+  }
+
+  // =====================================================================
   // ОБРАБОТЧИКИ СОБЫТИЙ
   // =====================================================================
 
   // Клик по кубу
   el.cubeWrapper.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (!state.isBombActive) spinCube();
+    if (!state.isBombActive && !state.isSpinning) spinCube();
   });
 
   // Тряска (акселерометр)
@@ -612,23 +769,27 @@
   el.doBombTaskBtn.addEventListener("click", async () => {
     if (!state.bombData) return;
 
-    const bombId = getBombIdFromUrl();
+    const bombId = state.currentBombId;
     hideBombModal();
 
     if (bombId) {
       try {
+        setButtonLoading(el.doBombTaskBtn, true);
         showLoading(true);
         await API.completeBomb(bombId);
       } catch (err) {
         showToast(err.message, "error");
       } finally {
         showLoading(false);
+        setButtonLoading(el.doBombTaskBtn, false);
       }
     }
 
     setTask(`✅ Выполнено! "${state.bombData.task}"`);
+    const oldScore = state.score;
     state.score += 15;
     state.completedTasks++;
+    animateScore(oldScore, state.score, el.scoreDisplay);
     updateStats();
     triggerHaptic("heavy");
     launchConfetti(80);
@@ -639,18 +800,20 @@
   el.passBombBtn.addEventListener("click", async () => {
     if (!state.bombData) return;
 
-    const bombId = getBombIdFromUrl();
+    const bombId = state.currentBombId;
     hideBombModal();
 
     if (bombId) {
       try {
+        setButtonLoading(el.passBombBtn, true);
         showLoading(true);
         const result = await API.passBomb(bombId);
-        openShareBombLink(result);
+        await openShareBombLink(result);
       } catch (err) {
         showToast(err.message, "error");
       } finally {
         showLoading(false);
+        setButtonLoading(el.passBombBtn, false);
       }
     }
   });
@@ -662,17 +825,23 @@
     loadStats();
     updateStats();
 
-    // Placeholder
     setTask("👆 Тряси или жми на куб!", true);
 
-    // Проверяем, не пришли ли с бомбой
+    // Фоновые частицы
+    initParticles();
+
+    // Бомба
     checkForBombOnLoad();
 
-    // Первый haptic
     setTimeout(() => triggerHaptic("light"), 600);
 
-    console.log("🚀 Безумный Куб готов! Тряси или жми!");
+    console.log("🚀 Безумный Куб v2.1 готов! Тряси или жми!");
   }
 
-  init();
+  // Ждём DOM
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 })();
