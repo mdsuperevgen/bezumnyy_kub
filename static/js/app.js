@@ -496,23 +496,32 @@
     return "https://t.me/bezumnyy_kub_bot";
   }
 
+  function getMiniAppLink(startapp) {
+    const sp = startapp ? `?startapp=${startapp}` : "";
+    return `https://t.me/bezumnyy_kub_bot/app${sp}`;
+  }
+
   async function openShare(task, isBomb) {
     if (!task && !state.currentTask) return;
     const t = task || state.currentTask;
     const prefix = isBomb ? "💣" : "🔥";
-    const text = `${prefix} Я ${isBomb ? "передал бомбу" : "выполнил задание"} от Безумного Куба: "${t}"! Тряси куб, если не струсил: ${getBotLink()}`;
+    const verb = isBomb ? "передал бомбу" : "выполнил задание";
+    const text = `${prefix} Я ${verb} от Безумного Куба: «${t}»`;
+    const link = isBomb ? getMiniAppLink(state.currentBombId) : getMiniAppLink();
 
-    // Пробуем Telegram API
-    const url = `https://t.me/share/url?url=${encodeURIComponent(text)}`;
+    // Telegram share URL — открывает список контактов
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
+
     if (tg) {
-      tg.openTelegramLink(url);
+      tg.openTelegramLink(shareUrl);
     } else {
       // Fallback: копируем в буфер
-      const copied = await copyToClipboard(text);
+      const fullText = `${text}\n\n${link}`;
+      const copied = await copyToClipboard(fullText);
       if (copied) {
-        showToast("📋 Текст скопирован! Вставь в Telegram", "success");
+        showToast("📋 Скопировано! Отправь другу", "success");
       } else {
-        window.open(url, "_blank");
+        window.open(shareUrl, "_blank");
       }
     }
 
@@ -547,6 +556,8 @@
       setButtonLoading(el.bombBtn, true);
       showLoading(true);
       const result = await API.createBomb(t);
+      state.currentBombId = result.bomb_id;
+      // Открываем список контактов Telegram для отправки
       await openShareBombLink(result);
     } catch (err) {
       showToast(err.message, "error");
@@ -557,20 +568,22 @@
   }
 
   async function openShareBombLink(result) {
-    // Прямая ссылка на Mini App с bomb_id
-    const miniAppUrl = result.link;
+    const miniAppLink = result.link; // t.me/bezumnyy_kub_bot/app?startapp=bomb_xxx
+    const text = `💣 Я передаю тебе бомбу от Безумного Куба! Задание: «${result.task}»`;
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(miniAppLink)}&text=${encodeURIComponent(text)}`;
 
-    // Копируем ссылку в буфер
-    const copied = await copyToClipboard(miniAppUrl);
-
-    if (copied) {
-      showToast("📋 Ссылка скопирована! Отправь другу в личку", "success");
-    } else if (tg) {
-      // Fallback: открываем share dialog
-      const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(miniAppUrl)}&text=${encodeURIComponent("💣 Я передаю тебе бомбу от Безумного Куба!")}`;
+    if (tg) {
+      // Открывает список контактов Telegram
       tg.openTelegramLink(shareUrl);
     } else {
-      window.open(miniAppUrl, "_blank");
+      // Fallback
+      const fullText = `${text}\n\n${miniAppLink}`;
+      const copied = await copyToClipboard(fullText);
+      if (copied) {
+        showToast("📋 Ссылка скопирована! Отправь другу", "success");
+      } else {
+        window.open(shareUrl, "_blank");
+      }
     }
 
     triggerHaptic("heavy");
