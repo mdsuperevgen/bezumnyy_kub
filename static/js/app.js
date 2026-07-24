@@ -1,12 +1,25 @@
 /**
  * Безумный Куб — клиентская логика Telegram Mini App.
  * Зависимости: Telegram.WebApp (опционально), Web Audio API.
+ *
+ * Алгоритм передачи бомбы:
+ * 1. Игрок А получает задание
+ * 2. Игрок А решает передать бомбу
+ * 3. Генерация уникальной ссылки
+ * 4. Отправка другу (выбор канала) — список контактов Telegram
+ * 5. Друг Б получает ссылку
+ * 6. Друг Б открывает бомбу
+ * 7. Запуск таймера 15 минут
+ * 8. Варианты:
+ *    ✅ Выполнить → бомба обезврежена
+ *    🔄 Передать дальше → новая бомба
+ *    ⏰ Не успеть → бомба взрывается
  */
 (function () {
   "use strict";
 
   // =====================================================================
-  // ИНИЦИАЛИЗАЦИЯ TELEGRAM
+  // TELEGRAM
   // =====================================================================
   const tg = window.Telegram?.WebApp;
   if (tg) {
@@ -16,7 +29,7 @@
   }
 
   // =====================================================================
-  // DOM-ЭЛЕМЕНТЫ (кешируем один раз)
+  // DOM
   // =====================================================================
   const $ = (id) => document.getElementById(id);
   const el = {
@@ -40,7 +53,7 @@
   };
 
   // =====================================================================
-  // СОСТОЯНИЕ
+  // STATE
   // =====================================================================
   const state = {
     currentTask: null,
@@ -53,18 +66,18 @@
     bombData: null,
     isBombActive: false,
     hasGeneratedTask: false,
-    currentBombId: null, // ID текущей бомбы при открытии
+    currentBombId: null,
   };
 
   // =====================================================================
-  // ВСПОМОГАТЕЛЬНЫЕ
+  // HELPERS
   // =====================================================================
   function clamp(v, min, max) {
     return Math.max(min, Math.min(max, v));
   }
 
   // =====================================================================
-  // ТОСТ-УВЕДОМЛЕНИЯ
+  // TOAST
   // =====================================================================
   function showToast(message, type) {
     const old = document.querySelector(".toast-notification");
@@ -89,7 +102,7 @@
   }
 
   // =====================================================================
-  // КАСТОМНАЯ МОДАЛКА ПОДТВЕРЖДЕНИЯ (вместо confirm)
+  // CONFIRM MODAL (кастомная, т.к. confirm() не работает в Telegram)
   // =====================================================================
   function showConfirmModal(title, message) {
     return new Promise((resolve) => {
@@ -125,7 +138,7 @@
   }
 
   // =====================================================================
-  // ИНДИКАТОР ЗАГРУЗКИ
+  // LOADING
   // =====================================================================
   function showLoading(show) {
     if (el.loadingOverlay) {
@@ -133,9 +146,6 @@
     }
   }
 
-  // =====================================================================
-  // Состояние кнопок
-  // =====================================================================
   function setButtonLoading(btn, loading) {
     if (!btn) return;
     if (loading) {
@@ -149,7 +159,7 @@
   }
 
   // =====================================================================
-  // Копирование текста (fallback для Telegram)
+  // CLIPBOARD
   // =====================================================================
   async function copyToClipboard(text) {
     try {
@@ -161,7 +171,6 @@
         await navigator.clipboard.writeText(text);
         return true;
       }
-      // Fallback: textarea
       const ta = document.createElement("textarea");
       ta.value = text;
       ta.style.position = "fixed";
@@ -177,7 +186,156 @@
   }
 
   // =====================================================================
-  // API-ВЫЗОВЫ (с обработкой ошибок)
+  // SHARING — открывает список контактов Telegram
+  // =====================================================================
+  function getMiniAppLink(startapp) {
+    const sp = startapp ? `?startapp=${startapp}` : "";
+    return `https://t.me/bezumnyy_kub_bot/app${sp}`;
+  }
+
+  /** Открывает список контактов с сообщением + ссылкой на Mini App */
+  function shareToContact(message, link) {
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(message)}`;
+    if (tg) {
+      tg.openTelegramLink(shareUrl);
+    } else {
+      const fullText = `${message}\n\n${link}`;
+      copyToClipboard(fullText).then((ok) => {
+        if (ok) showToast("📋 Скопировано! Отправь другу", "success");
+        else window.open(shareUrl, "_blank");
+      });
+    }
+    triggerHaptic("light");
+  }
+
+  // =====================================================================
+  // SCENARIO: игрок выполнил задание (кнопка "Выполнил! Скинуть в чат")
+  // =====================================================================
+  function shareTaskCompleted(task) {
+    const text = `🔥 Я выполнил задание от Безумного Куба: «${task}»! Тряси куб, если не струсил!`;
+    shareToContact(text, getMiniAppLink());
+
+    state.score += 10;
+    state.completedTasks++;
+    updateStats();
+    animateScore(state.score - 10, state.score, el.scoreDisplay);
+    launchConfetti(60);
+    playSuccessSound();
+  }
+
+  // =====================================================================
+  // SCENARIO: игрок А создаёт бомбу → передаёт игроку Б
+  // 3. Генерация ссылки → 4. Отправка другу (выбор канала)
+  // =====================================================================
+  async function createAndShareBomb(task) {
+    if (!task && !state.currentTask) return;
+    const t = task || state.currentTask;
+
+    const ok = await showConfirmModal(
+      "💣 Передать бомбу?",
+      `Задание: "${t.length > 60 ? t.slice(0, 60) + "…" : t}"\nУ получателя будет 15 минут!`
+    );
+    if (!ok) return;
+
+    try {
+      setButtonLoading(el.bombBtn, true);
+      showLoading(true);
+      const result = await API.createBomb(t);
+      state.currentBombId = result.bomb_id;
+
+      // Открываем список контактов Telegram
+      shareToContact(
+        `💣 Я передаю тебе бомбу от Безумного Куба! Задание: «${result.task}»`,
+        result.link
+      );
+
+      triggerHaptic("heavy");
+      state.bombPassedCount++;
+      updateStats();
+      playBombSound();
+      showToast(`💣 Бомба "${result.task}" передана!`, "success");
+    } catch (err) {
+      showToast(err.message, "error");
+    } finally {
+      showLoading(false);
+      setButtonLoading(el.bombBtn, false);
+    }
+  }
+
+  // =====================================================================
+  // SCENARIO: ✅ Выполнить задание из бомбы (модалка)
+  // 8.1 → бомба обезврежена + открыть список контактов
+  // =====================================================================
+  async function completeBombAndShare() {
+    if (!state.bombData) return;
+    const bombId = state.currentBombId;
+    const task = state.bombData.task;
+    hideBombModal();
+
+    if (bombId) {
+      try {
+        setButtonLoading(el.doBombTaskBtn, true);
+        showLoading(true);
+        await API.completeBomb(bombId);
+      } catch (err) {
+        showToast(err.message, "error");
+      } finally {
+        showLoading(false);
+        setButtonLoading(el.doBombTaskBtn, false);
+      }
+    }
+
+    setTask(`✅ Выполнено! "${task}"`);
+    state.score += 15;
+    state.completedTasks++;
+    updateStats();
+    animateScore(state.score - 15, state.score, el.scoreDisplay);
+    triggerHaptic("heavy");
+    launchConfetti(80);
+    playSuccessSound();
+
+    // Открываем список контактов — поделиться результатом
+    shareToContact(
+      `✅ Я выполнил задание Безумного Куба: «${task}»! Тряси куб, если не струсил!`,
+      getMiniAppLink()
+    );
+  }
+
+  // =====================================================================
+  // SCENARIO: 🔄 Передать бомбу дальше (модалка)
+  // 8.2 → новая бомба → список контактов
+  // =====================================================================
+  async function passBombAndShare() {
+    if (!state.bombData) return;
+    const bombId = state.currentBombId;
+    hideBombModal();
+
+    if (bombId) {
+      try {
+        setButtonLoading(el.passBombBtn, true);
+        showLoading(true);
+        const result = await API.passBomb(bombId);
+        // Открываем список контактов
+        shareToContact(
+          `💣 Я передаю тебе бомбу от Безумного Куба! Задание: «${result.task}»`,
+          result.link
+        );
+        triggerHaptic("heavy");
+        state.bombPassedCount++;
+        updateStats();
+        playBombSound();
+        showToast(`💣 Бомба "${result.task}" передана дальше!`, "success");
+      } catch (err) {
+        showToast(err.message, "error");
+      } finally {
+        showLoading(false);
+        setButtonLoading(el.passBombBtn, false);
+      }
+    }
+  }
+
+  // =====================================================================
+  // API
   // =====================================================================
   async function apiFetch(url, options) {
     const controller = new AbortController();
@@ -232,7 +390,7 @@
   };
 
   // =====================================================================
-  // ЗВУК (Web Audio) — корректное создание и resume
+  // AUDIO
   // =====================================================================
   let audioCtx = null;
 
@@ -282,15 +440,14 @@
   }
 
   // =====================================================================
-  // HAPTIC FEEDBACK
+  // HAPTIC
   // =====================================================================
   function triggerHaptic(style) {
     try {
       if (tg?.HapticFeedback) {
         tg.HapticFeedback.impactOccurred(style);
       } else if (navigator.vibrate) {
-        const d =
-          style === "heavy" ? [50, 30, 50] : style === "light" ? 20 : 30;
+        const d = style === "heavy" ? [50, 30, 50] : style === "light" ? 20 : 30;
         navigator.vibrate(d);
       }
     } catch {
@@ -299,7 +456,7 @@
   }
 
   // =====================================================================
-  // КОНФЕТТИ (защита от утечки, кастомные emoji)
+  // CONFETTI
   // =====================================================================
   const CONFETTI_COLORS = [
     "#ff6b6b", "#ffd93d", "#6bcb77", "#4d96ff",
@@ -313,35 +470,23 @@
   function launchConfetti(count) {
     count = Math.min(count, 80);
     const now = Date.now();
-
     for (let i = 0; i < count; i++) {
       if (confettiCount > MAX_CONFETTI) {
         const old = el.confettiContainer.querySelector(".confetti-piece");
-        if (old) {
-          old.remove();
-          confettiCount--;
-        }
+        if (old) { old.remove(); confettiCount--; }
       }
-
       const piece = document.createElement("div");
       piece.className = "confetti-piece";
-
-      const color = CONFETTI_COLORS[(now + i) % CONFETTI_COLORS.length];
-      const shape = CONFETTI_SHAPES[(now + i) % CONFETTI_SHAPES.length];
-      const size = 8 + ((now + i * 7) % 14);
-
-      piece.textContent = shape;
-      piece.style.color = color;
-      piece.style.fontSize = size + "px";
+      piece.textContent = CONFETTI_SHAPES[(now + i) % CONFETTI_SHAPES.length];
+      piece.style.color = CONFETTI_COLORS[(now + i) % CONFETTI_COLORS.length];
+      piece.style.fontSize = (8 + ((now + i * 7) % 14)) + "px";
       piece.style.left = Math.random() * 100 + "%";
       piece.style.top = "-10px";
-      piece.style.animationDuration = 2 + Math.random() * 2.5 + "s";
+      piece.style.animationDuration = (2 + Math.random() * 2.5) + "s";
       piece.style.animationDelay = Math.random() * 0.6 + "s";
       piece.style.setProperty("--rot", Math.random() * 720 - 360 + "deg");
-
       el.confettiContainer.appendChild(piece);
       confettiCount++;
-
       piece.addEventListener("animationend", () => {
         piece.remove();
         confettiCount--;
@@ -350,23 +495,18 @@
   }
 
   // =====================================================================
-  // СТАТИСТИКА (localStorage)
+  // STATS (localStorage)
   // =====================================================================
   const STORAGE_KEY = "kub_stats_v3";
 
   function saveStats() {
     try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          score: state.score,
-          completedTasks: state.completedTasks,
-          bombPassedCount: state.bombPassedCount,
-        })
-      );
-    } catch {
-      /* игнор */
-    }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        score: state.score,
+        completedTasks: state.completedTasks,
+        bombPassedCount: state.bombPassedCount,
+      }));
+    } catch { /* игнор */ }
   }
 
   function loadStats() {
@@ -378,9 +518,7 @@
         state.completedTasks = data.completedTasks || 0;
         state.bombPassedCount = data.bombPassedCount || 0;
       }
-    } catch {
-      /* игнор */
-    }
+    } catch { /* игнор */ }
   }
 
   function updateStats() {
@@ -390,31 +528,27 @@
     saveStats();
   }
 
-  // Анимация счёта (число бежит вверх)
   function animateScore(from, to, el) {
     if (!el) return;
     const duration = 400;
     const start = performance.now();
-
     function tick(now) {
       const progress = Math.min((now - start) / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3); // easeOutCubic
-      const current = Math.round(from + (to - from) * eased);
-      el.textContent = current;
+      const eased = 1 - Math.pow(1 - progress, 3);
+      el.textContent = Math.round(from + (to - from) * eased);
       if (progress < 1) requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);
   }
 
   // =====================================================================
-  // ЗАДАНИЕ
+  // TASK
   // =====================================================================
   function setTask(text, isPlaceholder) {
     state.currentTask = text;
     state.hasGeneratedTask = !isPlaceholder;
     el.taskDisplay.textContent = text;
     el.taskDisplay.classList.toggle("task-placeholder", !!isPlaceholder);
-
     if (!isPlaceholder) {
       el.taskDisplay.classList.remove("task-pop");
       void el.taskDisplay.offsetWidth;
@@ -423,7 +557,7 @@
   }
 
   // =====================================================================
-  // ВРАЩЕНИЕ КУБА
+  // CUBE SPIN
   // =====================================================================
   async function spinCube() {
     if (state.isSpinning) return;
@@ -432,15 +566,11 @@
     el.cube.classList.remove("spinning");
     void el.cube.offsetWidth;
     el.cube.classList.add("spinning");
-
     triggerHaptic("heavy");
     playCubeSound();
 
     await new Promise((resolve) => {
-      const onEnd = () => {
-        el.cube.removeEventListener("animationend", onEnd);
-        resolve();
-      };
+      const onEnd = () => { el.cube.removeEventListener("animationend", onEnd); resolve(); };
       el.cube.addEventListener("animationend", onEnd, { once: true });
       setTimeout(resolve, 1200);
     });
@@ -464,7 +594,26 @@
   }
 
   // =====================================================================
-  // СВАЙП ПО КУБУ
+  // SHAKE DETECTION
+  // =====================================================================
+  if (window.DeviceMotionEvent) {
+    let lastShake = 0;
+    window.addEventListener("devicemotion", (event) => {
+      const acc = event.accelerationIncludingGravity;
+      if (!acc) return;
+      const mag = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+      const now = Date.now();
+      if (mag > 18 && now - lastShake > 600) {
+        lastShake = now;
+        if (!state.isSpinning && !state.isBombActive) {
+          spinCube();
+        }
+      }
+    }, { passive: true });
+  }
+
+  // =====================================================================
+  // SWIPE
   // =====================================================================
   let touchStartX = 0;
   let touchStartY = 0;
@@ -478,126 +627,16 @@
   el.cubeWrapper.addEventListener("touchend", (e) => {
     if (state.isBombActive) return;
     const t = e.changedTouches[0];
-    const dx = t.clientX - touchStartX;
-    const dy = t.clientY - touchStartY;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
-    if (dist > 80) {
-      // Свайп — более сильное вращение
-      if (!state.isSpinning) spinCube();
+    const dist = Math.sqrt(
+      Math.pow(t.clientX - touchStartX, 2) + Math.pow(t.clientY - touchStartY, 2)
+    );
+    if (dist > 80 && !state.isSpinning) {
+      spinCube();
     }
-    // else: обычный клик обрабатывается отдельно
   }, { passive: true });
 
   // =====================================================================
-  // ПОДЕЛИТЬСЯ
-  // =====================================================================
-  function getBotLink() {
-    return "https://t.me/bezumnyy_kub_bot";
-  }
-
-  function getMiniAppLink(startapp) {
-    const sp = startapp ? `?startapp=${startapp}` : "";
-    return `https://t.me/bezumnyy_kub_bot/app${sp}`;
-  }
-
-  async function openShare(task, isBomb) {
-    if (!task && !state.currentTask) return;
-    const t = task || state.currentTask;
-    const prefix = isBomb ? "💣" : "🔥";
-    const verb = isBomb ? "передал бомбу" : "выполнил задание";
-    const text = `${prefix} Я ${verb} от Безумного Куба: «${t}»`;
-    const link = isBomb ? getMiniAppLink(state.currentBombId) : getMiniAppLink();
-
-    // Telegram share URL — открывает список контактов
-    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
-
-    if (tg) {
-      tg.openTelegramLink(shareUrl);
-    } else {
-      // Fallback: копируем в буфер
-      const fullText = `${text}\n\n${link}`;
-      const copied = await copyToClipboard(fullText);
-      if (copied) {
-        showToast("📋 Скопировано! Отправь другу", "success");
-      } else {
-        window.open(shareUrl, "_blank");
-      }
-    }
-
-    triggerHaptic("light");
-
-    if (!isBomb) {
-      const oldScore = state.score;
-      state.completedTasks++;
-      state.score += 10;
-      animateScore(oldScore, state.score, el.scoreDisplay);
-      updateStats();
-      launchConfetti(60);
-      playSuccessSound();
-    }
-  }
-
-  // =====================================================================
-  // БОМБА — СОЗДАНИЕ
-  // =====================================================================
-  async function createAndShareBomb(task) {
-    if (!task && !state.currentTask) return;
-    const t = task || state.currentTask;
-
-    // Кастомное подтверждение вместо confirm() (не работает в Telegram)
-    const ok = await showConfirmModal(
-      "💣 Передать бомбу?",
-      `Задание: "${t.length > 60 ? t.slice(0, 60) + "…" : t}"\nУ получателя будет 15 минут!`
-    );
-    if (!ok) return;
-
-    try {
-      setButtonLoading(el.bombBtn, true);
-      showLoading(true);
-      const result = await API.createBomb(t);
-      state.currentBombId = result.bomb_id;
-      // Открываем список контактов Telegram для отправки
-      await openShareBombLink(result);
-    } catch (err) {
-      showToast(err.message, "error");
-    } finally {
-      showLoading(false);
-      setButtonLoading(el.bombBtn, false);
-    }
-  }
-
-  async function openShareBombLink(result) {
-    const miniAppLink = result.link; // t.me/bezumnyy_kub_bot/app?startapp=bomb_xxx
-    const text = `💣 Я передаю тебе бомбу от Безумного Куба! Задание: «${result.task}»`;
-    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(miniAppLink)}&text=${encodeURIComponent(text)}`;
-
-    if (tg) {
-      // Открывает список контактов Telegram
-      tg.openTelegramLink(shareUrl);
-    } else {
-      // Fallback
-      const fullText = `${text}\n\n${miniAppLink}`;
-      const copied = await copyToClipboard(fullText);
-      if (copied) {
-        showToast("📋 Ссылка скопирована! Отправь другу", "success");
-      } else {
-        window.open(shareUrl, "_blank");
-      }
-    }
-
-    triggerHaptic("heavy");
-    const oldBomb = state.bombPassedCount;
-    state.bombPassedCount++;
-    animateScore(oldBomb, state.bombPassedCount, el.bombCount);
-    updateStats();
-    playBombSound();
-
-    showToast(`💣 Бомба "${result.task}" передана!`, "success");
-  }
-
-  // =====================================================================
-  // БОМБА — ТАЙМЕР (на основе Date.now, без дрифта)
+  // BOMB TIMER
   // =====================================================================
   function tickBombTimer() {
     const remaining = Math.max(0, state.bombTimerEnd - Date.now());
@@ -631,7 +670,6 @@
     const totalMs = timeLeftSec * 1000;
     state.bombTimerEnd = Date.now() + totalMs;
     if (state.bombData) state.bombData.totalTime = totalMs;
-
     clearInterval(state.bombTimerId);
     tickBombTimer();
     state.bombTimerId = setInterval(tickBombTimer, 200);
@@ -647,7 +685,6 @@
     el.bombModal.classList.add("active");
     state.isBombActive = true;
     state.bombData = { task, totalTime: timeLeftSec * 1000 };
-
     startBombTimer(timeLeftSec);
     triggerHaptic("heavy");
     playBombSound();
@@ -661,7 +698,8 @@
   }
 
   // =====================================================================
-  // БОМБА — ВЗРЫВ
+  // BOMB EXPLOSION
+  // 8.3 ⏰ Не успеть → бомба взрывается
   // =====================================================================
   function bombExploded() {
     hideBombModal();
@@ -678,54 +716,43 @@
 
     triggerHaptic("heavy");
 
-    // Позор
+    // Отправляем позор в чат — список контактов
     const shameText = `💥 Я струсил и не выполнил задание: "${state.bombData?.task || "задание"}"! Тряси куб, если не струсил!`;
     setTimeout(() => {
-      const url = `https://t.me/share/url?url=${encodeURIComponent(shameText)}`;
-      if (tg) tg.openTelegramLink(url);
-      else {
-        copyToClipboard(shameText).then((ok) => {
-          if (ok) showToast("📋 Текст позора скопирован!", "info");
-          else window.open(url, "_blank");
-        });
-      }
+      shareToContact(shameText, getMiniAppLink());
     }, 1500);
 
     overlay.querySelector(".explosion-btn").addEventListener("click", () => {
       overlay.remove();
     });
-
     setTimeout(() => {
       if (overlay.parentNode) overlay.remove();
     }, 10000);
   }
 
   // =====================================================================
-  // БОМБА — ПАРСИНГ URL
+  // BOMB PARSING — читает startapp откуда нужно
+  // 6. Друг Б открывает бомбу
   // =====================================================================
   function getBombIdFromUrl() {
-    // 1. Telegram WebApp: initDataUnsafe.start_param
     let sp = null;
+    // 1. Telegram WebApp initDataUnsafe (основной путь в TMA)
     try {
       if (tg?.initDataUnsafe?.start_param) {
         sp = tg.initDataUnsafe.start_param;
       }
     } catch {}
-
-    // 2. Fallback: URL query string
+    // 2. URL query string fallback
     if (!sp) {
       try {
         const params = new URLSearchParams(window.location.search);
         sp = params.get("startapp") || params.get("tgWebAppStartParam");
       } catch {}
     }
-
     if (!sp) return null;
 
-    // Формат: bomb_<hex_id> (только bomb_id — никакого задания)
     if (sp.startsWith("bomb_")) {
-      const bombId = sp.slice(5); // убираем "bomb_"
-      // ID должен быть чистым hex (24 символа)
+      const bombId = sp.slice(5);
       if (bombId.length === 24 && /^[0-9a-f]+$/.test(bombId)) {
         return bombId;
       }
@@ -742,6 +769,7 @@
     API.checkBomb(bombId)
       .then((data) => {
         if (data.status === "active") {
+          // 7. Запуск таймера 15 минут
           showBombModal(data.task, data.time_left);
         } else if (data.status === "expired") {
           showToast("💥 Эта бомба уже взорвалась!", "error");
@@ -755,10 +783,9 @@
   }
 
   // =====================================================================
-  // Background частицы (эффект звездопада)
+  // BACKGROUND PARTICLES
   // =====================================================================
   function initParticles() {
-    const container = document.body;
     for (let i = 0; i < 25; i++) {
       const p = document.createElement("div");
       p.className = "bg-particle";
@@ -780,132 +807,53 @@
   }
 
   // =====================================================================
-  // ОБРАБОТЧИКИ СОБЫТИЙ
+  // EVENT HANDLERS
   // =====================================================================
 
   // Клик по кубу
-  el.cubeWrapper.addEventListener("click", (e) => {
+  el.cubeWrapper.addEventListener("click", () => {
     if (!state.isBombActive && !state.isSpinning) spinCube();
   });
 
-  // Тряска (акселерометр)
-  if (window.DeviceMotionEvent) {
-    let lastShake = 0;
-    window.addEventListener(
-      "devicemotion",
-      (event) => {
-        const acc = event.accelerationIncludingGravity;
-        if (!acc) return;
-        const mag = Math.sqrt(
-          acc.x * acc.x + acc.y * acc.y + acc.z * acc.z
-        );
-        const now = Date.now();
-        if (mag > 18 && now - lastShake > 600) {
-          lastShake = now;
-          if (!state.isSpinning && !state.isBombActive) {
-            spinCube();
-            triggerHaptic("heavy");
-          }
-        }
-      },
-      { passive: true }
-    );
-  }
-
-  // Кнопка "Поделиться"
+  // Кнопка "Выполнил! Скинуть в чат"
   el.shareBtn.addEventListener("click", async () => {
     if (!state.currentTask || !state.hasGeneratedTask) {
       await spinCube();
-      if (state.currentTask) openShare();
+      if (state.currentTask) shareTaskCompleted(state.currentTask);
       return;
     }
-    openShare();
+    shareTaskCompleted(state.currentTask);
   });
 
-  // Кнопка "Бомба"
+  // Кнопка "Передать Бомбу"
   el.bombBtn.addEventListener("click", async () => {
     if (!state.currentTask || !state.hasGeneratedTask) {
       await spinCube();
-      if (state.currentTask) await createAndShareBomb();
+      if (state.currentTask) await createAndShareBomb(state.currentTask);
       return;
     }
-    await createAndShareBomb();
+    await createAndShareBomb(state.currentTask);
   });
 
-  // Модалка бомбы: выполнить
-  el.doBombTaskBtn.addEventListener("click", async () => {
-    if (!state.bombData) return;
+  // Модалка: ✅ Выполнить задание
+  el.doBombTaskBtn.addEventListener("click", completeBombAndShare);
 
-    const bombId = state.currentBombId;
-    hideBombModal();
-
-    if (bombId) {
-      try {
-        setButtonLoading(el.doBombTaskBtn, true);
-        showLoading(true);
-        await API.completeBomb(bombId);
-      } catch (err) {
-        showToast(err.message, "error");
-      } finally {
-        showLoading(false);
-        setButtonLoading(el.doBombTaskBtn, false);
-      }
-    }
-
-    setTask(`✅ Выполнено! "${state.bombData.task}"`);
-    const oldScore = state.score;
-    state.score += 15;
-    state.completedTasks++;
-    animateScore(oldScore, state.score, el.scoreDisplay);
-    updateStats();
-    triggerHaptic("heavy");
-    launchConfetti(80);
-    playSuccessSound();
-  });
-
-  // Модалка бомбы: передать
-  el.passBombBtn.addEventListener("click", async () => {
-    if (!state.bombData) return;
-
-    const bombId = state.currentBombId;
-    hideBombModal();
-
-    if (bombId) {
-      try {
-        setButtonLoading(el.passBombBtn, true);
-        showLoading(true);
-        const result = await API.passBomb(bombId);
-        await openShareBombLink(result);
-      } catch (err) {
-        showToast(err.message, "error");
-      } finally {
-        showLoading(false);
-        setButtonLoading(el.passBombBtn, false);
-      }
-    }
-  });
+  // Модалка: 🔄 Передать дальше
+  el.passBombBtn.addEventListener("click", passBombAndShare);
 
   // =====================================================================
-  // ИНИЦИАЛИЗАЦИЯ
+  // INIT
   // =====================================================================
   function init() {
     loadStats();
     updateStats();
-
     setTask("👆 Тряси или жми на куб!", true);
-
-    // Фоновые частицы
     initParticles();
-
-    // Бомба
     checkForBombOnLoad();
-
     setTimeout(() => triggerHaptic("light"), 600);
-
-    console.log("🚀 Безумный Куб v2.1 готов! Тряси или жми!");
+    console.log("🚀 Безумный Куб v2.2 готов! Тряси или жми!");
   }
 
-  // Ждём DOM
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
   } else {
