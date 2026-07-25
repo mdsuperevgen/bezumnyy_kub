@@ -234,7 +234,13 @@
   function shareToContact(message, miniAppLink) {
     const text = `${message}\n\n🚀 ${miniAppLink}`;
     const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(miniAppLink)}&text=${encodeURIComponent(text)}`;
-    tg.openTelegramLink(shareUrl);
+
+    if (tg) {
+      // openLink с try_instant_view=false — надёжнее чем openTelegramLink после await
+      tg.openLink(shareUrl, { try_instant_view: false });
+    } else {
+      window.open(shareUrl, "_blank");
+    }
     triggerHaptic("light");
   }
 
