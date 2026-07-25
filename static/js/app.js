@@ -232,17 +232,9 @@
 
   /** Открывает список контактов с сообщением. */
   function shareToContact(message, miniAppLink) {
-    // Используем Mini App ссылку как url — тогда при клике получатель попадёт сразу в Mini App
     const text = `${message}\n\n🚀 ${miniAppLink}`;
     const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(miniAppLink)}&text=${encodeURIComponent(text)}`;
-    if (tg) {
-      tg.openTelegramLink(shareUrl);
-    } else {
-      copyToClipboard(text).then((ok) => {
-        if (ok) showToast("📋 Скопировано! Отправь другу", "success");
-        else window.open(shareUrl, "_blank");
-      });
-    }
+    tg.openTelegramLink(shareUrl);
     triggerHaptic("light");
   }
 
