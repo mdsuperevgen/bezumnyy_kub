@@ -22,10 +22,28 @@
   // TELEGRAM
   // =====================================================================
   const tg = window.Telegram?.WebApp;
+  const isInTelegram = !!tg;
+
   if (tg) {
     tg.expand();
     tg.setBackgroundColor("#0a0818");
     tg.setHeaderColor("#0a0818");
+  } else {
+    // Не в Telegram — показываем фоллбэк и адаптируем ссылку под startapp
+    const fallback = document.getElementById("tgFallback");
+    const btn = document.getElementById("tgOpenBtn");
+    if (fallback && btn) {
+      // Ищем bomb_<id> в URL и добавляем в ссылку
+      const params = new URLSearchParams(window.location.search);
+      const startapp = params.get("startapp") || params.get("tgWebAppStartParam");
+      if (startapp) {
+        btn.href = `https://t.me/bezumnyy_kub_bot/app?startapp=${encodeURIComponent(startapp)}`;
+      }
+      // Прячем основной контент, показываем фоллбэк
+      const app = document.getElementById("app");
+      if (app) app.style.display = "none";
+      fallback.style.display = "flex";
+    }
   }
 
   // =====================================================================
@@ -193,13 +211,11 @@
     return `https://t.me/bezumnyy_kub_bot/app${sp}`;
   }
 
-  /** Открывает список контактов с сообщением. Ссылка на Mini App — в тексте (Telegram сам делает её кликабельной). */
+  /** Открывает список контактов с сообщением. */
   function shareToContact(message, miniAppLink) {
-    // Ссылка на Mini App только в тексте — Telegram создаст кликабельную t.me ссылку
-    // При клике откроется Mini App с правильным startapp
+    // Используем Mini App ссылку как url — тогда при клике получатель попадёт сразу в Mini App
     const text = `${message}\n\n🚀 ${miniAppLink}`;
-    // url — простая ссылка на бота (для preview в сообщении)
-    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent("https://t.me/bezumnyy_kub_bot")}&text=${encodeURIComponent(text)}`;
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(miniAppLink)}&text=${encodeURIComponent(text)}`;
     if (tg) {
       tg.openTelegramLink(shareUrl);
     } else {
@@ -745,36 +761,55 @@
         sp = tg.initDataUnsafe.start_param;
       }
     } catch {}
-    // 2. URL query string fallback
+    // 2. URL query string — проверяем все возможные имена параметров
     if (!sp) {
       try {
         const params = new URLSearchParams(window.location.search);
-        sp = params.get("startapp") || params.get("tgWebAppStartParam");
+        sp = params.get("startapp")
+          || params.get("tgWebAppStartParam")
+          || params.get("startApp")
+          || params.get("start_param");
+      } catch {}
+    }
+    // 3. Ищем в window.location.hash (некоторые Telegram-клиенты передают так)
+    if (!sp) {
+      try {
+        const hash = window.location.hash;
+        if (hash) {
+          const hashParams = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
+          sp = hashParams.get("startapp") || hashParams.get("tgWebAppStartParam");
+        }
       } catch {}
     }
     if (!sp) return null;
 
-    if (sp.startsWith("bomb_")) {
-      const bombId = sp.slice(5);
-      // ID — чистый hex любой длины (гибкая проверка)
-      if (bombId.length > 0 && /^[0-9a-f]+$/.test(bombId)) {
-        return bombId;
-      }
+    // Поддержка форматов: bomb_<hex>, bomb_<hex>. Без учёта регистра.
+    const match = sp.match(/^bomb_([0-9a-f]+)$/i);
+    if (match && match[1].length > 0) {
+      return match[1];
     }
     return null;
   }
 
   function checkForBombOnLoad() {
-    // Пробуем сразу, затем с задержкой (tg.initDataUnsafe может быть не готов)
+    let attempts = 0;
+    const maxAttempts = 8;
+
     function tryCheck() {
       const bombId = getBombIdFromUrl();
-      if (!bombId) return false;
+      if (!bombId) {
+        attempts++;
+        if (attempts < maxAttempts) {
+          const delay = Math.min(200 * Math.pow(1.5, attempts), 3000);
+          setTimeout(tryCheck, delay);
+        }
+        return;
+      }
 
       state.currentBombId = bombId;
       API.checkBomb(bombId)
         .then((data) => {
           if (data.status === "active") {
-            // 7. Запуск таймера 15 минут
             showBombModal(data.task, data.time_left);
           } else if (data.status === "expired") {
             showToast("💥 Эта бомба уже взорвалась!", "error");
@@ -784,18 +819,17 @@
             showToast("❌ Бомба не найдена", "error");
           }
         })
-        .catch(() => {}); // тихо — попробуем ещё
-      return true;
+        .catch((err) => {
+          // Если запрос упал — пробуем ещё, если есть попытки
+          attempts++;
+          if (attempts < maxAttempts) {
+            const delay = Math.min(200 * Math.pow(1.5, attempts), 3000);
+            setTimeout(tryCheck, delay);
+          }
+        });
     }
 
-    if (tryCheck()) return;
-
-    // Ретрай через 300мс (tg.initDataUnsafe может грузиться)
-    setTimeout(() => {
-      if (tryCheck()) return;
-      // Ещё через 500мс — последняя попытка
-      setTimeout(() => tryCheck(), 500);
-    }, 300);
+    tryCheck();
   }
 
   // =====================================================================

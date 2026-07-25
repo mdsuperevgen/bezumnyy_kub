@@ -119,5 +119,21 @@
     </div>
 
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <noscript>
+        <div style="text-align:center;color:#fff;padding:40px;">
+            <h2>JavaScript отключён</h2>
+            <p>Для работы приложения нужен JavaScript. Включи его в настройках браузера.</p>
+        </div>
+    </noscript>
+    <!-- Fallback: открыто вне Telegram -->
+    <div id="tgFallback" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:9999; display:none; align-items:center; justify-content:center; flex-direction:column; text-align:center; padding:20px;">
+        <div style="max-width:400px;">
+            <h2 style="color:#fff; font-size:24px; margin-bottom:16px;">🚀 Открой в Telegram</h2>
+            <p style="color:#aaa; margin-bottom:24px;">Безумный Куб работает только внутри Telegram. Нажми кнопку ниже, чтобы открыть игру.</p>
+            <a id="tgOpenBtn" href="https://t.me/bezumnyy_kub_bot/app" style="display:inline-block; padding:14px 32px; background:linear-gradient(135deg,#0088cc,#00aaff); color:#fff; border-radius:12px; text-decoration:none; font-size:18px; font-weight:bold;">
+                🎲 Играть в Telegram
+            </a>
+        </div>
+    </div>
 </body>
 </html>
