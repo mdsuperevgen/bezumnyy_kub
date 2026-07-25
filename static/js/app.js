@@ -24,6 +24,24 @@
   const tg = window.Telegram?.WebApp;
   const isInTelegram = !!tg;
 
+  // Сохраняем launch-параметры при первом открытии (hash может потеряться при refresh)
+  (function saveLaunchParams() {
+    try {
+      const hash = window.location.hash;
+      if (hash) {
+        const raw = hash.startsWith("#") ? hash.slice(1) : hash;
+        const hp = new URLSearchParams(raw);
+        // Сохраняем tgWebAppStartParam, если он есть
+        const sp = hp.get("tgWebAppStartParam");
+        if (sp) {
+          try { sessionStorage.setItem("tg_start_param", sp); } catch {}
+        }
+        // Сохраняем весь hash на случай, если понадобится
+        try { sessionStorage.setItem("tg_launch_hash", raw); } catch {}
+      }
+    } catch {}
+  })();
+
   if (tg) {
     tg.expand();
     tg.setBackgroundColor("#0a0818");
@@ -37,7 +55,7 @@
       const params = new URLSearchParams(window.location.search);
       const startapp = params.get("startapp") || params.get("tgWebAppStartParam");
       if (startapp) {
-        btn.href = `https://t.me/bezumnyy_kub_bot/app?startapp=${encodeURIComponent(startapp)}`;
+        btn.href = `https://t.me/bezumnyy_kub_bot?startapp=${encodeURIComponent(startapp)}`;
       }
       // Прячем основной контент, показываем фоллбэк
       const app = document.getElementById("app");
@@ -207,8 +225,9 @@
   // SHARING — открывает список контактов Telegram
   // =====================================================================
   function getMiniAppLink(startapp) {
+    // Main Mini App формат: https://t.me/botusername?startapp=xxx
     const sp = startapp ? `?startapp=${startapp}` : "";
-    return `https://t.me/bezumnyy_kub_bot/app${sp}`;
+    return `https://t.me/bezumnyy_kub_bot${sp}`;
   }
 
   /** Открывает список контактов с сообщением. */
@@ -755,35 +774,48 @@
   // =====================================================================
   function getBombIdFromUrl() {
     let sp = null;
-    // 1. Telegram WebApp initDataUnsafe (основной путь в TMA)
+
+    // 1. Цепочка приоритетов: hash > initDataUnsafe > query string > sessionStorage
+
+    // Telegram передаёт launch-параметры в window.location.hash
+    // (включая tgWebAppStartParam)
     try {
-      if (tg?.initDataUnsafe?.start_param) {
-        sp = tg.initDataUnsafe.start_param;
+      const hash = window.location.hash;
+      if (hash) {
+        const raw = hash.startsWith("#") ? hash.slice(1) : hash;
+        const hashParams = new URLSearchParams(raw);
+        sp = hashParams.get("tgWebAppStartParam");
       }
     } catch {}
-    // 2. URL query string — проверяем все возможные имена параметров
+
+    // 2. Telegram WebApp SDK (initDataUnsafe.start_param — то же значение)
+    if (!sp) {
+      try {
+        if (tg?.initDataUnsafe?.start_param) {
+          sp = tg.initDataUnsafe.start_param;
+        }
+      } catch {}
+    }
+
+    // 3. URL query string fallback (браузеры, отладка, старые клиенты)
     if (!sp) {
       try {
         const params = new URLSearchParams(window.location.search);
-        sp = params.get("startapp")
-          || params.get("tgWebAppStartParam")
+        sp = params.get("tgWebAppStartParam")
+          || params.get("startapp")
           || params.get("startApp")
           || params.get("start_param");
       } catch {}
     }
-    // 3. Ищем в window.location.hash (некоторые Telegram-клиенты передают так)
+
+    // 4. sessionStorage — сохранённый при первом открытии (на случай refresh)
     if (!sp) {
-      try {
-        const hash = window.location.hash;
-        if (hash) {
-          const hashParams = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
-          sp = hashParams.get("startapp") || hashParams.get("tgWebAppStartParam");
-        }
-      } catch {}
+      try { sp = sessionStorage.getItem("tg_start_param"); } catch {}
     }
+
     if (!sp) return null;
 
-    // Поддержка форматов: bomb_<hex>, bomb_<hex>. Без учёта регистра.
+    // Поддержка формата: bomb_<hex> (регистронезависимо)
     const match = sp.match(/^bomb_([0-9a-f]+)$/i);
     if (match && match[1].length > 0) {
       return match[1];

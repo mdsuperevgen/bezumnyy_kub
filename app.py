@@ -331,10 +331,12 @@ bomb_manager = BombManager()
 # ---------------------------------------------------------------------------
 def _bomb_link(bomb_id: str) -> tuple[str, str]:
     """Генерирует корректную Telegram Deep Link.
-    Формат: bomb_<id> (максимум 31 символ — помещается в лимит startapp).
+    Использует формат Main Mini App: https://t.me/botusername?startapp=command
+    startapp лимит: 512 символов, разрешены A-Z, a-z, 0-9, _, -
     """
     startapp = f"bomb_{bomb_id}"
-    return f"https://t.me/{BOT_USERNAME}/app?startapp={startapp}", startapp
+    # Main Mini App link — работает если бот настроен в BotFather (/setmainapp)
+    return f"https://t.me/{BOT_USERNAME}?startapp={startapp}", startapp
 
 
 # ---------------------------------------------------------------------------
